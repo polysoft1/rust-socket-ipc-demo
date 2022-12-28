@@ -1,30 +1,43 @@
-use std::{
-    io::{self, BufReader, BufRead, Write},
-    sync::mpsc::Sender, process::exit
+use futures::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    try_join,
 };
+use interprocess::local_socket::{
+    tokio::{LocalSocketListener, LocalSocketStream},
+};
+use std::io;
+use tokio::sync::oneshot::Sender;
 
-use anyhow::Context;
-use interprocess::local_socket::{LocalSocketStream, LocalSocketListener};
+async fn handle_conn(conn: LocalSocketStream) -> io::Result<()> {
+    // Split the connection into two halves to process
+    // received and sent data concurrently.
+    let (reader, mut writer) = conn.into_split();
+    let mut reader = BufReader::new(reader);
 
-fn handle_conn_error(conn: io::Result<LocalSocketStream>) -> Option<LocalSocketStream> {
-    match conn {
-        Ok(c) => Some(c),
-        Err(e) => {
-            eprintln!("Failed incoming connection: {}", e);
-            None
-        }
-    }
+    // Allocate a sizeable buffer for reading.
+    // This size should be enough and should be easy to find for the allocator.
+    let mut buffer = String::with_capacity(128);
+
+    // Describe the write operation as writing our whole message.
+    let write = writer.write_all(b"Hello from server!\n");
+    // Describe the read operation as reading into our big buffer.
+    let read = reader.read_line(&mut buffer);
+
+    // Run both operations concurrently.
+    try_join!(read, write)?;
+
+    // Dispose of our connection right now and not a moment later because I want to!
+    drop((reader, writer));
+
+    // Produce our output!
+    println!("Client answered: {}", buffer.trim());
+    Ok(())
 }
 
-pub fn main(notify: Sender<()>) -> anyhow::Result<()> {
+
+pub async fn main(notify: Sender<()>) -> anyhow::Result<()> {
     let name = "/tmp/polychat.sock";
-    let listener = match LocalSocketListener::bind(name) {
-        Err(e) => {
-            eprintln!("Could not start server: {}", e);
-            exit(1);
-        }
-        Ok(x) => x,
-    };
+    let listener = LocalSocketListener::bind(name)?;
 
     println!("Running server at {}", name);
 
@@ -32,21 +45,19 @@ pub fn main(notify: Sender<()>) -> anyhow::Result<()> {
 
     let mut buffer = String::with_capacity(128);
 
-    for conn in listener.incoming().filter_map(handle_conn_error) {
-        let mut conn = BufReader::new(conn);
-        println!("Incoming connection");
-
-        conn.read_line(&mut buffer).context("Failed to receive socket")?;
-
-        conn.get_mut().write_all(b"Hello from the servah!\n")?;
-        print!("Client answered: {}", buffer);
-
-        if buffer == "stop\n" {
-            break;
-        }
-
-        buffer.clear();
+    loop {
+        let conn = match listener.accept().await {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Could not handle incoming connection: {}", e);
+                continue;
+            }
+        };
+        
+        tokio::spawn(async move {
+            if let Err(e) = handle_conn(conn).await {
+                eprintln!("Error Handling conn: {}", e);
+            }
+        });
     }
-
-    Ok(())
 }

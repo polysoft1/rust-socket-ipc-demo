@@ -7,4 +7,6 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.68"
-interprocess = "1.2.1"
+futures = "0.3.25"
+interprocess = {version="1.2.1", features=["tokio_support"]}
+tokio = { version = "1.8", features=["net", "time", "io-util", "rt", "macros", "rt-multi-thread", "sync"]}

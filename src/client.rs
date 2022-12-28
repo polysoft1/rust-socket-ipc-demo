@@ -1,38 +1,42 @@
-use anyhow::Context;
-use interprocess::local_socket::{LocalSocketStream};
-use std::io::{prelude::*, BufReader};
+use futures::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    try_join,
+};
+use interprocess::local_socket::{tokio::LocalSocketStream, NameTypeSupport};
 
-pub fn main() -> anyhow::Result<()> {
+pub async fn main() -> anyhow::Result<()> {
     // Pick a name. There isn't a helper function for this, mostly because it's largely unnecessary:
     // in Rust, `match` is your concise, readable and expressive decision making construct.
     let name = "/tmp/polychat.sock";
 
-    // Preemptively allocate a sizeable buffer for reading.
+    // Await this here since we can't do a whole lot without a connection.
+    let conn = LocalSocketStream::connect(name).await?;
+
+    // This consumes our connection and splits it into two halves,
+    // so that we could concurrently act on both.
+    let (reader, mut writer) = conn.into_split();
+    let mut reader = BufReader::new(reader);
+
+    // Allocate a sizeable buffer for reading.
     // This size should be enough and should be easy to find for the allocator.
     let mut buffer = String::with_capacity(128);
 
-    // Create our connection. This will block until the server accepts our connection, but will fail
-    // immediately if the server hasn't even started yet; somewhat similar to how happens with TCP,
-    // where connecting to a port that's not bound to any server will send a "connection refused"
-    // response, but that will take twice the ping, the roundtrip time, to reach the client.
-    let conn = LocalSocketStream::connect(name).context("Failed to connect to server")?;
-    // Wrap it into a buffered reader right away so that we could read a single line out of it.
-    let mut conn = BufReader::new(conn);
+    // Describe the write operation as writing our whole string.
+    let write = writer.write_all(b"Hello from client!\n");
+    // Describe the read operation as reading until a newline into our buffer.
+    let read = reader.read_line(&mut buffer);
 
-    // Write our message into the stream. This will finish either when the whole message has been
-    // writen or if a write operation returns an error. (`.get_mut()` is to get the writer,
-    // `BufReader` doesn't implement a pass-through `Write`.)
-    conn.get_mut()
-        .write_all(b"Hello from client!\n")
-        .context("Socket send failed")?;
+    // Concurrently perform both operations.
+    try_join!(write, read)?;
 
-    // We now employ the buffer we allocated prior and read until EOF, which the server will
-    // similarly invoke with `.shutdown()`, verifying validity of UTF-8 on the fly.
-    conn.read_line(&mut buffer)
-        .context("Socket receive failed")?;
 
-    // Print out the result, getting the newline for free!
-    print!("Server answered: {}", buffer);
+    // Close the connection a bit earlier than you'd think we would. Nice practice!
+    drop((reader, writer));
+
+    // Describe the write operation as writing our whole string.
+    println!("Server answered: {}", buffer.trim());
+
+    // Display the results when we're done!
 
     Ok(())
 }

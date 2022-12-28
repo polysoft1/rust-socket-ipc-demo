@@ -71,16 +71,9 @@ macro_rules! tokio_main {
         }
     };
     (nomod $($pred:tt)*) => {
-        #[cfg(all($($pred)*))]
         #[tokio::main(flavor = "current_thread")]
         async fn main() -> anyhow::Result<()> {
             tokio_main!(@bmain)
-        }
-        #[cfg(not(all($($pred)*)))]
-        #[tokio::main(flavor = "current_thread")]
-        async fn main() -> anyhow::Result<()> {
-            eprintln!("not supported on this platform or feature set");
-            Ok(())
         }
     };
     ($($pred:tt)*) => {
