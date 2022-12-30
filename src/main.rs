@@ -1,8 +1,6 @@
 mod server;
 mod client;
 
-use std::os;
-
 use tokio::sync::oneshot;
 
 #[tokio::main]

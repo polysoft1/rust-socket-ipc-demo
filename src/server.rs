@@ -18,19 +18,33 @@ async fn handle_conn(conn: LocalSocketStream) -> io::Result<()> {
     // This size should be enough and should be easy to find for the allocator.
     let mut buffer = String::with_capacity(128);
 
-    // Describe the write operation as writing our whole message.
-    let write = writer.write_all(b"Hello from server!\n");
-    // Describe the read operation as reading into our big buffer.
-    let read = reader.read_line(&mut buffer);
+    let write = writer.write_all(b"First message sent from server to client\n");
+    // The other process is waiting for this, so wait.
+    try_join!(write)?;
 
-    // Run both operations concurrently.
-    try_join!(read, write)?;
+    // Loop until EOF
+    loop {
+        println!("Reading (in server code) from client");
+        
+        // Describe the write operation as writing our whole message.
+        
+        // Describe the read operation as reading into our big buffer.
+        let read = reader.read_line(&mut buffer);
+
+        try_join!(read)?; // Done with read
+
+        if buffer.contains('\0') {
+            break;
+        } else {
+            println!("Got from client: {}", buffer.as_str());
+            buffer.clear();
+        }
+    }
 
     // Dispose of our connection right now and not a moment later because I want to!
     drop((reader, writer));
 
     // Produce our output!
-    println!("Client answered: {}", buffer.trim());
     Ok(())
 }
 
@@ -43,21 +57,21 @@ pub async fn main(notify: Sender<()>) -> anyhow::Result<()> {
 
     let _ = notify.send(());
 
-    let mut buffer = String::with_capacity(128);
+    //loop {
+    let conn = match listener.accept().await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Could not handle incoming connection: {}", e);
+            return anyhow::Result::Err(anyhow::Error::msg("Could not handle incoming connection"));
+        }
+    };
+    
+    tokio::spawn(async move {
+        if let Err(e) = handle_conn(conn).await {
+            eprintln!("Error Handling conn: {}", e);
+        }
+    });
 
-    loop {
-        let conn = match listener.accept().await {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Could not handle incoming connection: {}", e);
-                continue;
-            }
-        };
-        
-        tokio::spawn(async move {
-            if let Err(e) = handle_conn(conn).await {
-                eprintln!("Error Handling conn: {}", e);
-            }
-        });
-    }
+    anyhow::Result::Ok(())
+    //}
 }
