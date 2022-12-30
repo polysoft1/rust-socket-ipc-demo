@@ -12,7 +12,7 @@ use std::time;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tokio::runtime::Handle;
+use tokio;
 
 async fn handle_conn(conn: LocalSocketStream) -> io::Result<()> {
     // Split the connection into two halves to process
@@ -31,7 +31,7 @@ async fn handle_conn(conn: LocalSocketStream) -> io::Result<()> {
     // This size should be enough and should be easy to find for the allocator.
     let mut buffer = String::with_capacity(128);
 
-    let read_thread_handle = Handle::current().spawn(async move {
+    let read_thread_handle = tokio::spawn(async move {
         let mut total_read = 0;
         loop {          
             // Describe the read operation as reading into our big buffer.
@@ -57,7 +57,7 @@ async fn handle_conn(conn: LocalSocketStream) -> io::Result<()> {
         drop(reader);
     });
 
-    let write_thread_handle = Handle::current().spawn(async move {
+    let write_thread_handle = tokio::spawn(async move {
         let mut total_written = 0;
         loop {
             if !running_clone_1.load(Ordering::Relaxed) {
