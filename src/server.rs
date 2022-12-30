@@ -60,7 +60,6 @@ async fn handle_conn(conn: LocalSocketStream) -> io::Result<()> {
     let write_thread_handle = Handle::current().spawn(async move {
         let mut total_written = 0;
         loop {
-            //let guard = mutex_2.lock();            
             if !running_clone_1.load(Ordering::Relaxed) {
                 println!("Reached end. Writing acknowledgement and exiting. Total written: {}", total_written);
                 let write = writer.write_all(b"\0\n");
@@ -79,7 +78,6 @@ async fn handle_conn(conn: LocalSocketStream) -> io::Result<()> {
                 eprintln!("Error writing");
             }
             total_written += 1;
-            //drop(guard);
 
             thread::sleep(time::Duration::from_millis(500));
         }
