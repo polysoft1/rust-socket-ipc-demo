@@ -5,16 +5,7 @@ use futures::{
 use interprocess::local_socket::{tokio::LocalSocketStream};
 use std::thread;
 use std::time;
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::sync::{Arc, Mutex};
-
-fn get_time_ms() -> u64 {
-    let start = SystemTime::now();
-    let since_the_epoch = start
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards");
-    since_the_epoch.as_secs()
-}
+use tokio::runtime::Handle;
 
 pub async fn main() -> anyhow::Result<()> {
     // Pick a name. There isn't a helper function for this, mostly because it's largely unnecessary:
@@ -34,35 +25,20 @@ pub async fn main() -> anyhow::Result<()> {
 
     // Allocate a sizeable buffer for reading.
     // This size should be enough and should be easy to find for the allocator.
-    let mut buffer = String::with_capacity(128);
-
-    /*let read = reader.read_line(&mut buffer);
-    let join_result = try_join!(read);
-
-    match join_result {
-        Ok(size) => {
-            println!("Got first message from server of length {:?}: \"{}\"", size, buffer.as_str());
-        },
-        Err(e) => {
-            eprintln!("Error reading first message from server: {:?}", e);
-        },
-    }*/
 
     // Loop until EOF
     // Allocate a sizeable buffer for reading.
     // This size should be enough and should be easy to find for the allocator.
     let mut buffer = String::with_capacity(128);
 
-    let read_async_handle = async {
+    let read_async_handle = Handle::current().spawn(async move {
         let mut total_read = 0;
         loop {                        
-            //let guard = mutex_1.lock();
             // Describe the read operation as reading into our big buffer.
             let read = reader.read_line(&mut buffer);
             total_read += 1;
 
             let read_result = read.await;
-            //drop(guard);
 
             if read_result.is_err() {
                 println!("Error reading result in client. Exiting. Total read: {}", total_read);
@@ -73,28 +49,26 @@ pub async fn main() -> anyhow::Result<()> {
                 println!("End acknowldged received on client side. Exiting. Total read: {}", total_read);
                 break;
             } else {
-                println!("{} Got from server: {}", get_time_ms(), buffer.as_str());
+                println!("SERVER -> CLIENT: {}", buffer.as_str());
                 buffer.clear();
             }
         }
         drop(reader);
-    };
+    });
     
 
-    let write_async_handle = async {
+    let write_async_handle = Handle::current().spawn(async move {
         for i in 0..5 {
-            //let guard = mutex_2.lock();
-            println!("Sending data #{} to server at {}", i, get_time_ms());
+            println!("Sending data #{} to server.", i);
 
             // Describe the write operation as writing our whole string.
-            let write = writer.write_all(b"Hello from client!\n");
+            let to_write = format!("Hello from client #{}.\n", i);
+            let write = writer.write_all(to_write.as_bytes());
             // Describe the read operation as reading until a newline into our buffer.
             //
 
             // Concurrently perform both operations.
-            //try_join!(write, read)?;
             let write_join_result = try_join!(write);
-            //drop(guard);
             match write_join_result {
                 Ok(_) => {
                     println!("Successfully wrote to server");
@@ -116,16 +90,15 @@ pub async fn main() -> anyhow::Result<()> {
                 eprintln!("Error writing null end message to server: {}", e);
             },
         }
-    };
+    });
 
-    join!(read_async_handle, write_async_handle);
-
-
-    // Close the connection a bit earlier than you'd think we would. Nice practice!
-    drop(writer);
-
-    // Describe the write operation as writing our whole string.
-    println!("Server answered: {}", buffer.trim());
+    let (read_join_result, write_join_result) = join!(read_async_handle, write_async_handle);
+    if read_join_result.is_err() {
+        eprintln!("Failed to join to read future")
+    }
+    if write_join_result.is_err() {
+        eprintln!("Failed to join to write future")
+    }
 
     // Display the results when we're done!
 
